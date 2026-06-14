@@ -28,3 +28,9 @@ Open `http://127.0.0.1:5173`.
 cd backend
 .\.venv\Scripts\python -m pytest -q
 ```
+
+## License
+
+GPL-3.0-only. See `LICENSE`.
+
+This edition depends on `litemapy`, so the repository is licensed under GPL-3.0-only for compatibility.
