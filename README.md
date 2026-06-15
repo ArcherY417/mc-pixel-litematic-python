@@ -172,4 +172,4 @@ This edition depends on `litemapy`, so the repository is licensed under GPL-3.0-
 
 ## Disclaimer
 
-This project is not affiliated with Mojang, Microsoft, Minecraft, Litematica, or litemapy.
+This project is not affiliated with Mojang, Microsoft, Minecraft, Litematica, or litemapy. See [DISCLAIMER.md](DISCLAIMER.md).
