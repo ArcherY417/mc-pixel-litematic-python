@@ -47,6 +47,7 @@ class PaletteMode(str, Enum):
     WOOL = "wool"
     CONCRETE = "concrete"
     TERRACOTTA = "terracotta"
+    PIXEL_ART = "pixel_art"
     MAP_ART = "map_art"
     SURVIVAL = "survival"
     CUSTOM = "custom"

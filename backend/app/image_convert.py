@@ -16,6 +16,8 @@ from app.palette import select_blocks
 AIR_ID = "minecraft:air"
 DITHER_STRENGTH = 0.34
 DITHER_ERROR_LIMIT = 42.0
+BAYER_4X4 = np.array([0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5], dtype=np.float64).reshape(4, 4)
+BAYER_4X4 = (BAYER_4X4 + 0.5) / 16
 
 
 @dataclass
@@ -91,6 +93,8 @@ def nearest_block_index(
     palette_lab: np.ndarray,
     palette_hsl: np.ndarray,
     quality: QualityMode,
+    x: int,
+    y: int,
 ) -> tuple[int, float]:
     if quality == QualityMode.FAST:
         weights = np.array([0.30, 0.59, 0.11])
@@ -100,24 +104,91 @@ def nearest_block_index(
         lab_distances = np.sum((palette_lab - pixel_lab) ** 2, axis=1)
         distances = hue_aware_lab_distances(pixel, palette_hsl, lab_distances)
     idx = int(np.argmin(distances))
+    if quality == QualityMode.HIGH:
+        idx = pastel_lighten_index(pixel, idx, palette_hsl, x, y)
+        idx = pastel_tint_index(pixel, idx, palette_hsl, x, y)
     return idx, float(np.sqrt(distances[idx]))
 
 
+def pastel_lighten_index(pixel: np.ndarray, best_idx: int, palette_hsl: np.ndarray, x: int, y: int) -> int:
+    source_h, source_s, source_l = rgb_to_hsl(pixel)
+    _best_h, best_s, best_l = palette_hsl[best_idx]
+    lightness_gap = source_l - best_l
+    if source_l < 0.62 or lightness_gap < 0.04:
+        return best_idx
+    warm_pastel = (source_h <= 52 or source_h >= 350) and source_l > 0.64
+
+    candidate_mask = (palette_hsl[:, 1] <= 0.09) & (palette_hsl[:, 2] > best_l + 0.05)
+    if not np.any(candidate_mask):
+        return best_idx
+
+    scores = np.abs(palette_hsl[:, 2] - source_l) * 100 + palette_hsl[:, 1] * 30
+    scores = np.where(candidate_mask, scores, np.inf)
+    neutral_idx = int(np.argmin(scores))
+    if warm_pastel:
+        return neutral_idx if source_l > 0.79 else best_idx
+
+    neutral_l = float(palette_hsl[neutral_idx, 2])
+    denominator = max(0.001, neutral_l - best_l)
+    amount = clamp01(lightness_gap / denominator) * (0.58 if source_s > 0.45 else 0.72)
+    return neutral_idx if amount > BAYER_4X4[(y + 1) % 4, (x + 2) % 4] else best_idx
+
+
+def pastel_tint_index(pixel: np.ndarray, best_idx: int, palette_hsl: np.ndarray, x: int, y: int) -> int:
+    chroma = float(np.max(pixel) - np.min(pixel))
+    source_h, source_s, source_l = rgb_to_hsl(pixel)
+    if chroma < 14 or source_s < 0.08 or source_l < 0.48:
+        return best_idx
+    if (source_h <= 52 or source_h >= 350) and source_l > 0.55:
+        return best_idx
+
+    best_h, best_s, _ = palette_hsl[best_idx]
+    if best_s >= 0.09 and float(hue_distance_array(source_h, np.array([best_h]))[0]) < 54:
+        return best_idx
+
+    hue_diff = hue_distance_array(source_h, palette_hsl[:, 0])
+    candidate_mask = (palette_hsl[:, 1] >= 0.12) & (hue_diff <= 50)
+    if not np.any(candidate_mask):
+        return best_idx
+
+    lightness_gap = np.abs(source_l - palette_hsl[:, 2])
+    scores = hue_diff * 2.4 + lightness_gap * 120 - palette_hsl[:, 1] * 18
+    scores = np.where(candidate_mask, scores, np.inf)
+    tint_idx = int(np.argmin(scores))
+    tint_lightness_gap = float(lightness_gap[tint_idx])
+    neutral_base = best_s < 0.09
+    base_amount = (
+        clamp01((chroma - 12) / 86)
+        * clamp01((source_l - 0.45) / 0.5)
+        * clamp01(1 - max(0.0, tint_lightness_gap - 0.14) / 0.5)
+        * 0.58
+    )
+    minimum_pastel_tint = clamp01((chroma - 16) / 70) * 0.62 if neutral_base and source_l > 0.68 else 0.0
+    amount = max(base_amount, minimum_pastel_tint)
+    return tint_idx if amount > BAYER_4X4[y % 4, x % 4] else best_idx
+
+
 def hue_aware_lab_distances(source: np.ndarray, palette_hsl: np.ndarray, lab_squared: np.ndarray) -> np.ndarray:
-    source_h, source_s, _ = rgb_to_hsl(source)
-    if source_s < 0.08:
+    source_h, source_s, source_l = rgb_to_hsl(source)
+    if source_s < 0.045:
         return lab_squared
 
     hue_diff = hue_distance_array(source_h, palette_hsl[:, 0])
-    source_is_greenish = 58 <= source_h <= 178 and source_s > 0.12
-    candidate_is_warm = (palette_hsl[:, 0] >= 28) & (palette_hsl[:, 0] <= 62) & (palette_hsl[:, 1] > 0.12)
-    candidate_is_greenish = (palette_hsl[:, 0] >= 68) & (palette_hsl[:, 0] <= 178) & (palette_hsl[:, 1] > 0.10)
+    color_intent = clamp01((source_s - 0.045) / 0.22) * (1.18 if source_l > 0.55 else 1.0)
+    candidate_is_neutral = palette_hsl[:, 1] < 0.08
+    candidate_has_color = palette_hsl[:, 1] > 0.08
+    near_hue = np.clip(1 - hue_diff / 48, 0.0, 1.0)
+    far_hue = np.clip((hue_diff - 58) / 92, 0.0, 1.0)
 
-    penalty = (hue_diff / 180) ** 2 * 260
-    if source_is_greenish:
-        penalty = penalty + np.where(candidate_is_warm, 520.0, 0.0)
-        penalty = penalty - np.where(candidate_is_greenish, 120.0, 0.0)
+    penalty = (hue_diff / 180) ** 2 * (220 + 300 * color_intent)
+    penalty = penalty + np.where(candidate_is_neutral, (260.0 if source_l > 0.55 else 150.0) * color_intent, 0.0)
+    penalty = penalty - np.where(candidate_has_color, near_hue * (190 + 160 * color_intent) * color_intent, 0.0)
+    penalty = penalty + np.where(candidate_has_color, far_hue * 260 * color_intent, 0.0)
     return np.maximum(0.0, lab_squared + penalty)
+
+
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 def hue_distance_array(a: float, b: np.ndarray) -> np.ndarray:
@@ -196,7 +267,7 @@ def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: Convert
                 work[y, x] = np.array([0, 0, 0])
 
             color = np.clip(work[y, x], 0, 255)
-            idx, distance = nearest_block_index(color, palette_rgb, palette_lab, palette_hsl, settings.quality)
+            idx, distance = nearest_block_index(color, palette_rgb, palette_lab, palette_hsl, settings.quality, x, y)
             block_id = settings.replacements.get(block_ids[idx], block_ids[idx])
             row.append(block_id)
 

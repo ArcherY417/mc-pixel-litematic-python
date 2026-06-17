@@ -354,6 +354,7 @@ function App() {
               ["wool", "羊毛"],
               ["concrete", "混凝土"],
               ["terracotta", "陶瓦"],
+              ["pixel_art", "推荐"],
               ["map_art", "地图画"],
               ["survival", "生存"],
               ["custom", "自定义"]
@@ -548,9 +549,40 @@ function rgb(color: [number, number, number]) {
   return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
 }
 
-function blockMatchesPalette(block: { categories: string[]; map_art: boolean; survival: boolean }, modes: Settings["palette_modes"]) {
+const PIXEL_ART_BLOCKS = new Set([
+  "minecraft:white_wool",
+  "minecraft:white_concrete",
+  "minecraft:white_terracotta",
+  "minecraft:light_gray_wool",
+  "minecraft:pink_wool",
+  "minecraft:pink_concrete",
+  "minecraft:light_blue_wool",
+  "minecraft:cyan_wool",
+  "minecraft:lime_wool",
+  "minecraft:lime_concrete",
+  "minecraft:lime_terracotta",
+  "minecraft:quartz_block",
+  "minecraft:calcite",
+  "minecraft:bone_block",
+  "minecraft:mushroom_stem",
+  "minecraft:end_stone",
+  "minecraft:smooth_sandstone",
+  "minecraft:snow_block",
+  "minecraft:sea_lantern",
+  "minecraft:verdant_froglight",
+  "minecraft:pearlescent_froglight",
+  "minecraft:ochre_froglight",
+  "minecraft:prismarine",
+  "minecraft:cherry_planks"
+]);
+
+function blockMatchesPalette(
+  block: { id: string; categories: string[]; map_art: boolean; survival: boolean },
+  modes: Settings["palette_modes"]
+) {
   return modes.some((mode) => {
     if (mode === "all") return true;
+    if (mode === "pixel_art") return PIXEL_ART_BLOCKS.has(block.id);
     if (mode === "map_art") return block.map_art;
     if (mode === "survival") return block.survival;
     if (mode === "custom") return true;
