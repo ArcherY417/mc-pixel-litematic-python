@@ -254,6 +254,7 @@ def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: Convert
     palette_lab = srgb_to_lab(palette_rgb)
     palette_hsl = rgb_array_to_hsl(palette_rgb)
     block_ids = [block.id for block in blocks]
+    block_index = by_id()
     grid: list[list[str]] = []
     air_count = 0
 
@@ -276,7 +277,7 @@ def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: Convert
             row.append(block_id)
 
             if settings.quality == QualityMode.HIGH and should_diffuse(color, distance):
-                quantized = np.array(blocks[idx].rgb, dtype=np.float64)
+                quantized = np.array(block_index.get(base_block_id(block_id), blocks[idx]).rgb, dtype=np.float64)
                 error = np.clip(work[y, x] - quantized, -DITHER_ERROR_LIMIT, DITHER_ERROR_LIMIT)
                 if x + 1 < image.width:
                     work[y, x + 1] += error * 7 / 16 * DITHER_STRENGTH
