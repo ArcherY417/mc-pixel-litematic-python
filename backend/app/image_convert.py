@@ -14,6 +14,8 @@ from app.palette import select_blocks
 
 
 AIR_ID = "minecraft:air"
+DITHER_STRENGTH = 0.34
+DITHER_ERROR_LIMIT = 42.0
 
 
 @dataclass
@@ -83,15 +85,15 @@ def srgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     return np.stack([l, a, b], axis=-1)
 
 
-def nearest_block_index(pixel: np.ndarray, palette_values: np.ndarray, quality: QualityMode) -> int:
+def nearest_block_index(pixel: np.ndarray, palette_values: np.ndarray, palette_lab: np.ndarray, quality: QualityMode) -> tuple[int, float]:
     if quality == QualityMode.FAST:
         weights = np.array([0.30, 0.59, 0.11])
         distances = np.sum(((palette_values - pixel) ** 2) * weights, axis=1)
     else:
         pixel_lab = srgb_to_lab(pixel.reshape(1, 3))[0]
-        palette_lab = srgb_to_lab(palette_values)
         distances = np.sum((palette_lab - pixel_lab) ** 2, axis=1)
-    return int(np.argmin(distances))
+    idx = int(np.argmin(distances))
+    return idx, float(np.sqrt(distances[idx]))
 
 
 def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: ConvertSettings) -> tuple[list[list[str]], Counter[str], int]:
@@ -99,9 +101,9 @@ def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: Convert
     rgb = rgba[..., :3]
     alpha = rgba[..., 3]
     palette_rgb = np.array([block.rgb for block in blocks], dtype=np.float64)
+    palette_lab = srgb_to_lab(palette_rgb)
     block_ids = [block.id for block in blocks]
     grid: list[list[str]] = []
-    materials: Counter[str] = Counter()
     air_count = 0
 
     work = rgb.copy()
@@ -117,24 +119,86 @@ def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: Convert
             if alpha[y, x] < 8 and settings.transparent_mode == TransparentMode.BLACK:
                 work[y, x] = np.array([0, 0, 0])
 
-            idx = nearest_block_index(np.clip(work[y, x], 0, 255), palette_rgb, settings.quality)
+            color = np.clip(work[y, x], 0, 255)
+            idx, distance = nearest_block_index(color, palette_rgb, palette_lab, settings.quality)
             block_id = settings.replacements.get(block_ids[idx], block_ids[idx])
             row.append(block_id)
-            materials[block_id] += 1
 
-            if settings.quality == QualityMode.HIGH:
+            if settings.quality == QualityMode.HIGH and should_diffuse(color, distance):
                 quantized = np.array(blocks[idx].rgb, dtype=np.float64)
-                error = work[y, x] - quantized
+                error = np.clip(work[y, x] - quantized, -DITHER_ERROR_LIMIT, DITHER_ERROR_LIMIT)
                 if x + 1 < image.width:
-                    work[y, x + 1] += error * 7 / 16
+                    work[y, x + 1] += error * 7 / 16 * DITHER_STRENGTH
                 if y + 1 < image.height:
                     if x > 0:
-                        work[y + 1, x - 1] += error * 3 / 16
-                    work[y + 1, x] += error * 5 / 16
+                        work[y + 1, x - 1] += error * 3 / 16 * DITHER_STRENGTH
+                    work[y + 1, x] += error * 5 / 16 * DITHER_STRENGTH
                     if x + 1 < image.width:
-                        work[y + 1, x + 1] += error * 1 / 16
+                        work[y + 1, x + 1] += error * 1 / 16 * DITHER_STRENGTH
         grid.append(row)
-    return grid, materials, air_count
+    if settings.quality == QualityMode.HIGH:
+        grid = despeckle_grid(grid)
+    return grid, count_materials(grid), air_count
+
+
+def should_diffuse(color: np.ndarray, lab_distance: float) -> bool:
+    luminance = float(color[0] * 0.2126 + color[1] * 0.7152 + color[2] * 0.0722)
+    chroma = float(np.max(color) - np.min(color))
+    if luminance > 205 and chroma < 42:
+        return False
+    if lab_distance < 9 or lab_distance > 46:
+        return False
+    return True
+
+
+def despeckle_grid(grid: list[list[str]]) -> list[list[str]]:
+    index = by_id()
+    height = len(grid)
+    width = len(grid[0]) if grid else 0
+    output = [row.copy() for row in grid]
+    for y in range(height):
+        for x in range(width):
+            current = grid[y][x]
+            if current == AIR_ID:
+                continue
+            counts: Counter[str] = Counter()
+            for yy in range(y - 1, y + 2):
+                for xx in range(x - 1, x + 2):
+                    if xx == x and yy == y:
+                        continue
+                    if yy < 0 or yy >= height or xx < 0 or xx >= width:
+                        continue
+                    neighbor = grid[yy][xx]
+                    if neighbor != AIR_ID:
+                        counts[neighbor] += 1
+            if not counts:
+                continue
+            majority, majority_count = counts.most_common(1)[0]
+            if majority == current or majority_count < 5:
+                continue
+            if is_protected_dark_line(current, majority, index):
+                continue
+            output[y][x] = majority
+    return output
+
+
+def is_protected_dark_line(current_id: str, replacement_id: str, index: dict[str, object]) -> bool:
+    current = index.get(current_id)
+    replacement = index.get(replacement_id)
+    if current is None or replacement is None:
+        return False
+    current_luma = current.rgb[0] * 0.2126 + current.rgb[1] * 0.7152 + current.rgb[2] * 0.0722
+    replacement_luma = replacement.rgb[0] * 0.2126 + replacement.rgb[1] * 0.7152 + replacement.rgb[2] * 0.0722
+    return current_luma < 80 and replacement_luma > 125
+
+
+def count_materials(grid: list[list[str]]) -> Counter[str]:
+    materials: Counter[str] = Counter()
+    for row in grid:
+        for block_id in row:
+            if block_id != AIR_ID:
+                materials[block_id] += 1
+    return materials
 
 
 def height_grid_for(image: Image.Image, settings: ConvertSettings) -> list[list[int]]:
