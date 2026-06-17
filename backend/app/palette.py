@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.data.blocks import BLOCKS, BlockColor, by_id
+from app.map_palette import MAP_ART_BLOCK_IDS
 from app.models import ConvertSettings, PaletteMode
 
 PIXEL_ART_BLOCKS = {
@@ -52,7 +53,7 @@ def block_matches_palette(block: BlockColor, modes: list[PaletteMode]) -> bool:
             return True
         if mode == PaletteMode.PIXEL_ART and block.id in PIXEL_ART_BLOCKS:
             return True
-        if mode == PaletteMode.MAP_ART and block.map_art:
+        if mode == PaletteMode.MAP_ART and block.id in MAP_ART_BLOCK_IDS:
             return True
         if mode == PaletteMode.SURVIVAL and block.survival:
             return True

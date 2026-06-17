@@ -122,12 +122,12 @@ def build_response(result_id: str, stored: StoredResult) -> ConvertResponse:
     materials = [
         MaterialItem(
             id=block_id,
-            name=block_index[block_id].name,
+            name=block_index[base_block_id(block_id)].name,
             count=count,
-            rgb=block_index[block_id].rgb,
+            rgb=block_index[base_block_id(block_id)].rgb,
         )
         for block_id, count in stored.art.materials.most_common()
-        if block_id in block_index
+        if base_block_id(block_id) in block_index
     ]
     return ConvertResponse(
         result_id=result_id,
@@ -137,6 +137,8 @@ def build_response(result_id: str, stored: StoredResult) -> ConvertResponse:
         block_count=sum(stored.art.materials.values()),
         air_count=stored.art.air_count,
         preview_png=data_url_png(stored.art.preview_png),
+        block_preview_png=data_url_png(stored.art.block_preview_png) if stored.art.block_preview_png else None,
+        map_preview_png=data_url_png(stored.art.map_preview_png) if stored.art.map_preview_png else None,
         materials=materials,
         downloads={
             "litematic": f"/api/download/{result_id}/litematic",
@@ -150,3 +152,7 @@ def build_response(result_id: str, stored: StoredResult) -> ConvertResponse:
 def safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", name).strip("-")
     return cleaned or "pixel-art"
+
+
+def base_block_id(block_id: str) -> str:
+    return block_id.split("[", 1)[0]

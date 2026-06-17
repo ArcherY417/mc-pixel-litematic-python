@@ -12,6 +12,10 @@ from app.models import BuildPlane, ConvertSettings, Direction
 
 def schematic_dimensions(art: ConvertedArt, settings: ConvertSettings) -> tuple[int, int, int]:
     image_w, image_h = art.width, art.height
+    if settings.art_mode.value == "map":
+        if settings.direction in (Direction.EAST, Direction.WEST):
+            return image_h, art.depth, image_w
+        return image_w, art.depth, image_h
     if settings.build_plane == BuildPlane.WALL:
         if settings.direction in (Direction.NORTH, Direction.SOUTH):
             return image_w, image_h, 1
@@ -22,8 +26,19 @@ def schematic_dimensions(art: ConvertedArt, settings: ConvertSettings) -> tuple[
 
 
 def pixel_to_region(x: int, y: int, art: ConvertedArt, settings: ConvertSettings) -> tuple[int, int, int]:
+    return pixel_to_region_level(x, y, art.height_grid[y][x], art, settings)
+
+
+def pixel_to_region_level(x: int, y: int, level: int, art: ConvertedArt, settings: ConvertSettings) -> tuple[int, int, int]:
     w, h = art.width, art.height
-    level = art.height_grid[y][x]
+    if settings.art_mode.value == "map":
+        if settings.direction == Direction.NORTH:
+            return x, level, y
+        if settings.direction == Direction.SOUTH:
+            return w - 1 - x, level, h - 1 - y
+        if settings.direction == Direction.EAST:
+            return y, level, w - 1 - x
+        return h - 1 - y, level, x
 
     if settings.build_plane == BuildPlane.WALL:
         ry = h - 1 - y
@@ -48,16 +63,21 @@ def pixel_to_region(x: int, y: int, art: ConvertedArt, settings: ConvertSettings
 def create_litematic(art: ConvertedArt, settings: ConvertSettings, output_path: Path) -> None:
     width, height, length = schematic_dimensions(art, settings)
     region = Region(0, 0, 0, width, height, length)
-    block_states = {AIR_ID: BlockState(AIR_ID)}
+    block_states = {AIR_ID: block_state_from_id(AIR_ID)}
 
-    for y, row in enumerate(art.block_grid):
-        for x, block_id in enumerate(row):
-            if block_id == AIR_ID:
-                continue
-            if block_id not in block_states:
-                block_states[block_id] = BlockState(block_id)
-            rx, ry, rz = pixel_to_region(x, y, art, settings)
-            region[rx, ry, rz] = block_states[block_id]
+    placements = art.placements or [
+        {"x": x, "y": y, "level": art.height_grid[y][x], "block_id": block_id}
+        for y, row in enumerate(art.block_grid)
+        for x, block_id in enumerate(row)
+    ]
+    for placement in placements:
+        block_id = placement["block_id"]
+        if block_id == AIR_ID:
+            continue
+        if block_id not in block_states:
+            block_states[block_id] = block_state_from_id(block_id)
+        rx, ry, rz = pixel_to_region_level(placement["x"], placement["y"], placement["level"], art, settings)
+        region[rx, ry, rz] = block_states[block_id]
 
     schematic = region.as_schematic(
         name=settings.name or "pixel-art",
@@ -85,3 +105,14 @@ def material_csv(materials: Counter[str]) -> str:
     for block_id, count in materials.most_common():
         lines.append(f"{block_id},{count}")
     return "\n".join(lines) + "\n"
+
+
+def block_state_from_id(block_id: str) -> BlockState:
+    if "[" not in block_id:
+        return BlockState(block_id)
+    name, raw_props = block_id.rstrip("]").split("[", 1)
+    props = {}
+    for entry in raw_props.split(","):
+        key, value = entry.split("=", 1)
+        props[key.strip()] = value.strip()
+    return BlockState(name, **props)

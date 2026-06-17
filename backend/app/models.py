@@ -58,6 +58,11 @@ class MapVariant(str, Enum):
     STAIRS = "stairs"
 
 
+class MapPreviewMode(str, Enum):
+    MAP = "map"
+    BLOCKS = "blocks"
+
+
 class ConvertSettings(BaseModel):
     name: str = Field(default="pixel-art", max_length=80)
     author: str = Field(default="MC Pixel Litematic Studio", max_length=80)
@@ -78,6 +83,7 @@ class ConvertSettings(BaseModel):
     map_columns: int = Field(default=1, ge=1, le=8)
     map_rows: int = Field(default=1, ge=1, le=8)
     map_variant: MapVariant = MapVariant.FLAT
+    map_preview: MapPreviewMode = MapPreviewMode.MAP
     show_grid: bool = True
 
 
@@ -106,5 +112,7 @@ class ConvertResponse(BaseModel):
     block_count: int
     air_count: int
     preview_png: str
+    block_preview_png: str | None = None
+    map_preview_png: str | None = None
     materials: list[MaterialItem]
     downloads: dict[str, str]

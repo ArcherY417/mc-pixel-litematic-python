@@ -39,6 +39,7 @@ const initialSettings: Settings = {
   map_columns: 1,
   map_rows: 1,
   map_variant: "flat",
+  map_preview: "map",
   show_grid: true
 };
 
@@ -166,7 +167,11 @@ function App() {
     setSettings((current) => ({ ...current, replacements: {} }));
   }
 
-  const previewSrc = previewMode === "source" ? sourceUrl : result?.preview_png || sourceUrl;
+  const convertedPreview =
+    settings.art_mode === "map" && settings.map_preview === "blocks"
+      ? result?.block_preview_png || result?.preview_png
+      : result?.map_preview_png || result?.preview_png;
+  const previewSrc = previewMode === "source" ? sourceUrl : convertedPreview || sourceUrl;
   const outputSize =
     settings.art_mode === "map"
       ? `${settings.map_columns * 128} x ${settings.map_rows * 128}`
@@ -301,6 +306,13 @@ function App() {
                   <option value="stairs">阶梯</option>
                 </select>
               </label>
+              <label>
+                预览
+                <select value={settings.map_preview} onChange={(event) => update("map_preview", event.target.value as Settings["map_preview"])}>
+                  <option value="map">地图效果</option>
+                  <option value="blocks">方块外观</option>
+                </select>
+              </label>
             </div>
           )}
 
@@ -330,7 +342,11 @@ function App() {
           <div className="field-grid two">
             <label>
               平面
-              <select value={settings.build_plane} onChange={(event) => update("build_plane", event.target.value as Settings["build_plane"])}>
+              <select
+                value={settings.art_mode === "map" ? "floor" : settings.build_plane}
+                disabled={settings.art_mode === "map"}
+                onChange={(event) => update("build_plane", event.target.value as Settings["build_plane"])}
+              >
                 <option value="wall">竖墙</option>
                 <option value="floor">地面</option>
                 <option value="ceiling">天花板</option>
@@ -576,6 +592,55 @@ const PIXEL_ART_BLOCKS = new Set([
   "minecraft:cherry_planks"
 ]);
 
+const MAP_ART_BLOCKS = new Set([
+  "minecraft:grass_block",
+  "minecraft:smooth_sandstone",
+  "minecraft:mushroom_stem",
+  "minecraft:red_concrete",
+  "minecraft:ice",
+  "minecraft:iron_block",
+  "minecraft:oak_planks",
+  "minecraft:white_wool",
+  "minecraft:orange_wool",
+  "minecraft:magenta_wool",
+  "minecraft:light_blue_wool",
+  "minecraft:yellow_wool",
+  "minecraft:lime_wool",
+  "minecraft:pink_wool",
+  "minecraft:gray_wool",
+  "minecraft:light_gray_wool",
+  "minecraft:cyan_wool",
+  "minecraft:purple_wool",
+  "minecraft:blue_wool",
+  "minecraft:brown_wool",
+  "minecraft:green_wool",
+  "minecraft:red_wool",
+  "minecraft:black_wool",
+  "minecraft:netherrack",
+  "minecraft:snow_block",
+  "minecraft:white_terracotta",
+  "minecraft:orange_terracotta",
+  "minecraft:magenta_terracotta",
+  "minecraft:light_blue_terracotta",
+  "minecraft:yellow_terracotta",
+  "minecraft:lime_terracotta",
+  "minecraft:pink_terracotta",
+  "minecraft:gray_terracotta",
+  "minecraft:light_gray_terracotta",
+  "minecraft:cyan_terracotta",
+  "minecraft:purple_terracotta",
+  "minecraft:blue_terracotta",
+  "minecraft:brown_terracotta",
+  "minecraft:green_terracotta",
+  "minecraft:red_terracotta",
+  "minecraft:black_terracotta",
+  "minecraft:quartz_block",
+  "minecraft:prismarine",
+  "minecraft:warped_wart_block",
+  "minecraft:deepslate",
+  "minecraft:water"
+]);
+
 function blockMatchesPalette(
   block: { id: string; categories: string[]; map_art: boolean; survival: boolean },
   modes: Settings["palette_modes"]
@@ -583,7 +648,7 @@ function blockMatchesPalette(
   return modes.some((mode) => {
     if (mode === "all") return true;
     if (mode === "pixel_art") return PIXEL_ART_BLOCKS.has(block.id);
-    if (mode === "map_art") return block.map_art;
+    if (mode === "map_art") return MAP_ART_BLOCKS.has(block.id);
     if (mode === "survival") return block.survival;
     if (mode === "custom") return true;
     return block.categories.includes(mode);

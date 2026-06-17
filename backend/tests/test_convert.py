@@ -8,7 +8,9 @@ from PIL import Image
 
 from app.image_convert import convert_image
 from app.litematic_export import create_litematic, pixel_to_region, schematic_dimensions
-from app.models import BuildPlane, ConvertSettings, Direction, PaletteMode, QualityMode
+from app.map_palette import create_map_palette
+from app.palette import select_blocks
+from app.models import ArtMode, BuildPlane, ConvertSettings, Direction, MapVariant, PaletteMode, QualityMode
 
 
 def png_bytes(pixels: list[list[tuple[int, int, int, int]]]) -> bytes:
@@ -70,3 +72,39 @@ def test_litematic_round_trip(tmp_path: Path) -> None:
     assert region.length == 1
     assert region[0, 0, 0].id != "minecraft:air"
     assert region[1, 0, 0].id != "minecraft:air"
+
+
+def test_map_art_palette_shades_and_water_depths() -> None:
+    settings = ConvertSettings(art_mode=ArtMode.MAP, map_variant=MapVariant.FLAT)
+    flat = create_map_palette(select_blocks(settings), settings.map_variant)
+    assert {candidate.shade for candidate in flat} == {1}
+
+    settings.map_variant = MapVariant.STAIRS
+    stairs = create_map_palette(select_blocks(settings), settings.map_variant)
+    assert {candidate.shade for candidate in stairs} == {0, 1, 2}
+    assert next(candidate for candidate in stairs if candidate.is_water and candidate.shade == 0).water_depth == 10
+    assert next(candidate for candidate in stairs if candidate.is_water and candidate.shade == 1).water_depth == 5
+    assert next(candidate for candidate in stairs if candidate.is_water and candidate.shade == 2).water_depth == 1
+
+
+def test_map_art_water_columns_are_counted() -> None:
+    settings = ConvertSettings(art_mode=ArtMode.MAP, map_variant=MapVariant.FLAT, map_columns=1, map_rows=1)
+    art = convert_image(png_bytes([[(64, 64, 255, 255)]]), settings)
+    assert art.width == 128
+    assert art.height == 128
+    assert "minecraft:water[level=0]" in art.materials
+    assert "minecraft:stone" in art.materials
+    assert art.depth == 6
+
+
+def test_map_art_litematic_writes_water_state(tmp_path: Path) -> None:
+    settings = ConvertSettings(name="map-water", art_mode=ArtMode.MAP, map_variant=MapVariant.FLAT)
+    art = convert_image(png_bytes([[(64, 64, 255, 255)]]), settings)
+    output = tmp_path / "map-water.litematic"
+    create_litematic(art, settings, output)
+    schematic = Schematic.load(str(output))
+    region = list(schematic.regions.values())[0]
+    assert region.width == 128
+    assert region.height == 6
+    assert region.length == 128
+    assert region[0, 5, 0].id == "minecraft:water"
