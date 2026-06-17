@@ -6,20 +6,27 @@ from app.models import ConvertSettings, PaletteMode
 
 def select_blocks(settings: ConvertSettings) -> list[BlockColor]:
     blocks = [block for block in BLOCKS if settings.mc_version in block.versions]
+    modes = settings.palette_modes or [settings.palette_mode]
 
-    if settings.palette_mode == PaletteMode.CUSTOM:
+    if PaletteMode.CUSTOM in modes:
         index = by_id()
         selected = [index[block_id] for block_id in settings.custom_blocks if block_id in index]
         return [block for block in selected if settings.mc_version in block.versions] or blocks
 
-    if settings.palette_mode == PaletteMode.ALL:
+    if PaletteMode.ALL in modes:
         return blocks
 
-    if settings.palette_mode == PaletteMode.MAP_ART:
-        return [block for block in blocks if block.map_art]
+    return [block for block in blocks if block_matches_palette(block, modes)]
 
-    if settings.palette_mode == PaletteMode.SURVIVAL:
-        return [block for block in blocks if block.survival]
 
-    category = settings.palette_mode.value
-    return [block for block in blocks if category in block.categories]
+def block_matches_palette(block: BlockColor, modes: list[PaletteMode]) -> bool:
+    for mode in modes:
+        if mode == PaletteMode.ALL:
+            return True
+        if mode == PaletteMode.MAP_ART and block.map_art:
+            return True
+        if mode == PaletteMode.SURVIVAL and block.survival:
+            return True
+        if mode not in (PaletteMode.CUSTOM, PaletteMode.MAP_ART, PaletteMode.SURVIVAL) and mode.value in block.categories:
+            return True
+    return False

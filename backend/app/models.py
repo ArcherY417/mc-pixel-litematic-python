@@ -69,6 +69,7 @@ class ConvertSettings(BaseModel):
     quality: QualityMode = QualityMode.STANDARD
     transparent_mode: TransparentMode = TransparentMode.AIR
     palette_mode: PaletteMode = PaletteMode.ALL
+    palette_modes: list[PaletteMode] = Field(default_factory=lambda: [PaletteMode.ALL])
     custom_blocks: list[str] = Field(default_factory=list)
     replacements: dict[str, str] = Field(default_factory=dict)
     build_plane: BuildPlane = BuildPlane.WALL

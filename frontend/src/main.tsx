@@ -31,6 +31,7 @@ const initialSettings: Settings = {
   quality: "standard",
   transparent_mode: "air",
   palette_mode: "all",
+  palette_modes: ["all"],
   custom_blocks: [],
   replacements: {},
   build_plane: "wall",
@@ -70,16 +71,13 @@ function App() {
 
   const filteredBlocks = useMemo(() => {
     const q = blockSearch.trim().toLowerCase();
+    const modes = settings.palette_modes?.length ? settings.palette_modes : [settings.palette_mode];
     return versionBlocks.filter((block) => {
       if (q && !`${block.id} ${block.name}`.toLowerCase().includes(q)) return false;
-      if (settings.palette_mode === "wool") return block.categories.includes("wool");
-      if (settings.palette_mode === "concrete") return block.categories.includes("concrete");
-      if (settings.palette_mode === "terracotta") return block.categories.includes("terracotta");
-      if (settings.palette_mode === "map_art") return block.map_art;
-      if (settings.palette_mode === "survival") return block.survival;
-      return true;
+      if (modes.includes("custom")) return true;
+      return blockMatchesPalette(block, modes);
     });
-  }, [blockSearch, settings.palette_mode, versionBlocks]);
+  }, [blockSearch, settings.palette_mode, settings.palette_modes, versionBlocks]);
 
   const selectedCustomSet = useMemo(() => new Set(settings.custom_blocks), [settings.custom_blocks]);
 
@@ -136,7 +134,24 @@ function App() {
       const next = new Set(current.custom_blocks);
       if (next.has(blockId)) next.delete(blockId);
       else next.add(blockId);
-      return { ...current, custom_blocks: [...next], palette_mode: "custom" };
+      return { ...current, custom_blocks: [...next], palette_mode: "custom", palette_modes: ["custom"] };
+    });
+  }
+
+  function togglePaletteMode(mode: Settings["palette_modes"][number]) {
+    setSettings((current) => {
+      if (mode === "all") {
+        return { ...current, palette_mode: "all", palette_modes: ["all"] };
+      }
+      if (mode === "custom") {
+        return { ...current, palette_mode: "custom", palette_modes: ["custom"] };
+      }
+      const currentModes = current.palette_modes?.length ? current.palette_modes : [current.palette_mode];
+      const next = new Set(currentModes.filter((item) => item !== "all" && item !== "custom"));
+      if (next.has(mode)) next.delete(mode);
+      else next.add(mode);
+      const palette_modes: Settings["palette_modes"] = next.size ? ([...next] as Settings["palette_modes"]) : ["all"];
+      return { ...current, palette_mode: palette_modes[0] as Settings["palette_mode"], palette_modes };
     });
   }
 
@@ -333,15 +348,31 @@ function App() {
           </div>
 
           <PanelTitle icon={<ListFilter size={18} />} label="方块" />
-          <select value={settings.palette_mode} onChange={(event) => update("palette_mode", event.target.value as Settings["palette_mode"])}>
-            <option value="all">全部</option>
-            <option value="wool">羊毛</option>
-            <option value="concrete">混凝土</option>
-            <option value="terracotta">陶瓦</option>
-            <option value="map_art">地图画可用</option>
-            <option value="survival">生存友好</option>
-            <option value="custom">自定义</option>
-          </select>
+          <div className="palette-options" role="group" aria-label="方块类型">
+            {[
+              ["all", "全部"],
+              ["wool", "羊毛"],
+              ["concrete", "混凝土"],
+              ["terracotta", "陶瓦"],
+              ["map_art", "地图画"],
+              ["survival", "生存"],
+              ["custom", "自定义"]
+            ].map(([mode, label]) => {
+              const active = (settings.palette_modes?.length ? settings.palette_modes : [settings.palette_mode]).includes(
+                mode as Settings["palette_modes"][number]
+              );
+              return (
+                <button
+                  key={mode}
+                  className={active ? "active" : ""}
+                  type="button"
+                  onClick={() => togglePaletteMode(mode as Settings["palette_modes"][number])}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <div className="search-box">
             <Search size={16} />
             <input value={blockSearch} onChange={(event) => setBlockSearch(event.target.value)} placeholder="搜索方块" />
@@ -515,6 +546,16 @@ function DownloadLink({ href, icon, label, downloadName }: { href?: string; icon
 
 function rgb(color: [number, number, number]) {
   return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+}
+
+function blockMatchesPalette(block: { categories: string[]; map_art: boolean; survival: boolean }, modes: Settings["palette_modes"]) {
+  return modes.some((mode) => {
+    if (mode === "all") return true;
+    if (mode === "map_art") return block.map_art;
+    if (mode === "survival") return block.survival;
+    if (mode === "custom") return true;
+    return block.categories.includes(mode);
+  });
 }
 
 function safeDownloadName(name: string) {

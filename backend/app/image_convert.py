@@ -91,9 +91,56 @@ def nearest_block_index(pixel: np.ndarray, palette_values: np.ndarray, palette_l
         distances = np.sum(((palette_values - pixel) ** 2) * weights, axis=1)
     else:
         pixel_lab = srgb_to_lab(pixel.reshape(1, 3))[0]
-        distances = np.sum((palette_lab - pixel_lab) ** 2, axis=1)
+        distances = np.array(
+            [
+                hue_aware_lab_distance(pixel, palette_values[i], float(np.sum((palette_lab[i] - pixel_lab) ** 2)))
+                for i in range(len(palette_values))
+            ]
+        )
     idx = int(np.argmin(distances))
     return idx, float(np.sqrt(distances[idx]))
+
+
+def hue_aware_lab_distance(source: np.ndarray, candidate: np.ndarray, lab_squared: float) -> float:
+    source_h, source_s, _ = rgb_to_hsl(source)
+    candidate_h, candidate_s, _ = rgb_to_hsl(candidate)
+    if source_s < 0.08:
+        return lab_squared
+
+    hue_diff = hue_distance(source_h, candidate_h)
+    source_is_greenish = 58 <= source_h <= 178 and source_s > 0.12
+    candidate_is_warm = 28 <= candidate_h <= 62 and candidate_s > 0.12
+    candidate_is_greenish = 68 <= candidate_h <= 178 and candidate_s > 0.10
+
+    penalty = (hue_diff / 180) ** 2 * 260
+    if source_is_greenish and candidate_is_warm:
+        penalty += 520
+    if source_is_greenish and candidate_is_greenish:
+        penalty -= 120
+    return max(0.0, lab_squared + penalty)
+
+
+def hue_distance(a: float, b: float) -> float:
+    diff = abs(a - b) % 360
+    return min(diff, 360 - diff)
+
+
+def rgb_to_hsl(rgb: np.ndarray) -> tuple[float, float, float]:
+    r, g, b = [float(channel) / 255.0 for channel in rgb]
+    max_v = max(r, g, b)
+    min_v = min(r, g, b)
+    lightness = (max_v + min_v) / 2
+    if max_v == min_v:
+        return 0.0, 0.0, lightness
+    delta = max_v - min_v
+    saturation = delta / (2 - max_v - min_v) if lightness > 0.5 else delta / (max_v + min_v)
+    if max_v == r:
+        hue = (g - b) / delta + (6 if g < b else 0)
+    elif max_v == g:
+        hue = (b - r) / delta + 2
+    else:
+        hue = (r - g) / delta + 4
+    return hue * 60, saturation, lightness
 
 
 def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: ConvertSettings) -> tuple[list[list[str]], Counter[str], int]:
