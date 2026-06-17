@@ -85,44 +85,44 @@ def srgb_to_lab(rgb: np.ndarray) -> np.ndarray:
     return np.stack([l, a, b], axis=-1)
 
 
-def nearest_block_index(pixel: np.ndarray, palette_values: np.ndarray, palette_lab: np.ndarray, quality: QualityMode) -> tuple[int, float]:
+def nearest_block_index(
+    pixel: np.ndarray,
+    palette_values: np.ndarray,
+    palette_lab: np.ndarray,
+    palette_hsl: np.ndarray,
+    quality: QualityMode,
+) -> tuple[int, float]:
     if quality == QualityMode.FAST:
         weights = np.array([0.30, 0.59, 0.11])
         distances = np.sum(((palette_values - pixel) ** 2) * weights, axis=1)
     else:
         pixel_lab = srgb_to_lab(pixel.reshape(1, 3))[0]
-        distances = np.array(
-            [
-                hue_aware_lab_distance(pixel, palette_values[i], float(np.sum((palette_lab[i] - pixel_lab) ** 2)))
-                for i in range(len(palette_values))
-            ]
-        )
+        lab_distances = np.sum((palette_lab - pixel_lab) ** 2, axis=1)
+        distances = hue_aware_lab_distances(pixel, palette_hsl, lab_distances)
     idx = int(np.argmin(distances))
     return idx, float(np.sqrt(distances[idx]))
 
 
-def hue_aware_lab_distance(source: np.ndarray, candidate: np.ndarray, lab_squared: float) -> float:
+def hue_aware_lab_distances(source: np.ndarray, palette_hsl: np.ndarray, lab_squared: np.ndarray) -> np.ndarray:
     source_h, source_s, _ = rgb_to_hsl(source)
-    candidate_h, candidate_s, _ = rgb_to_hsl(candidate)
     if source_s < 0.08:
         return lab_squared
 
-    hue_diff = hue_distance(source_h, candidate_h)
+    hue_diff = hue_distance_array(source_h, palette_hsl[:, 0])
     source_is_greenish = 58 <= source_h <= 178 and source_s > 0.12
-    candidate_is_warm = 28 <= candidate_h <= 62 and candidate_s > 0.12
-    candidate_is_greenish = 68 <= candidate_h <= 178 and candidate_s > 0.10
+    candidate_is_warm = (palette_hsl[:, 0] >= 28) & (palette_hsl[:, 0] <= 62) & (palette_hsl[:, 1] > 0.12)
+    candidate_is_greenish = (palette_hsl[:, 0] >= 68) & (palette_hsl[:, 0] <= 178) & (palette_hsl[:, 1] > 0.10)
 
     penalty = (hue_diff / 180) ** 2 * 260
-    if source_is_greenish and candidate_is_warm:
-        penalty += 520
-    if source_is_greenish and candidate_is_greenish:
-        penalty -= 120
-    return max(0.0, lab_squared + penalty)
+    if source_is_greenish:
+        penalty = penalty + np.where(candidate_is_warm, 520.0, 0.0)
+        penalty = penalty - np.where(candidate_is_greenish, 120.0, 0.0)
+    return np.maximum(0.0, lab_squared + penalty)
 
 
-def hue_distance(a: float, b: float) -> float:
-    diff = abs(a - b) % 360
-    return min(diff, 360 - diff)
+def hue_distance_array(a: float, b: np.ndarray) -> np.ndarray:
+    diff = np.abs(a - b) % 360
+    return np.minimum(diff, 360 - diff)
 
 
 def rgb_to_hsl(rgb: np.ndarray) -> tuple[float, float, float]:
@@ -143,12 +143,41 @@ def rgb_to_hsl(rgb: np.ndarray) -> tuple[float, float, float]:
     return hue * 60, saturation, lightness
 
 
+def rgb_array_to_hsl(rgb: np.ndarray) -> np.ndarray:
+    values = rgb.astype(np.float64) / 255.0
+    r = values[:, 0]
+    g = values[:, 1]
+    b = values[:, 2]
+    max_v = np.max(values, axis=1)
+    min_v = np.min(values, axis=1)
+    lightness = (max_v + min_v) / 2
+    delta = max_v - min_v
+    saturation = np.zeros_like(lightness)
+    non_gray = delta > 0
+    saturation[non_gray] = np.where(
+        lightness[non_gray] > 0.5,
+        delta[non_gray] / (2 - max_v[non_gray] - min_v[non_gray]),
+        delta[non_gray] / (max_v[non_gray] + min_v[non_gray]),
+    )
+
+    hue = np.zeros_like(lightness)
+    red = non_gray & (max_v == r)
+    green = non_gray & (max_v == g)
+    blue = non_gray & (max_v == b)
+    hue[red] = (g[red] - b[red]) / delta[red] + np.where(g[red] < b[red], 6, 0)
+    hue[green] = (b[green] - r[green]) / delta[green] + 2
+    hue[blue] = (r[blue] - g[blue]) / delta[blue] + 4
+    hue *= 60
+    return np.stack([hue, saturation, lightness], axis=1)
+
+
 def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: ConvertSettings) -> tuple[list[list[str]], Counter[str], int]:
     rgba = np.array(image).astype(np.float64)
     rgb = rgba[..., :3]
     alpha = rgba[..., 3]
     palette_rgb = np.array([block.rgb for block in blocks], dtype=np.float64)
     palette_lab = srgb_to_lab(palette_rgb)
+    palette_hsl = rgb_array_to_hsl(palette_rgb)
     block_ids = [block.id for block in blocks]
     grid: list[list[str]] = []
     air_count = 0
@@ -167,7 +196,7 @@ def match_pixels(image: Image.Image, blocks: list[BlockColor], settings: Convert
                 work[y, x] = np.array([0, 0, 0])
 
             color = np.clip(work[y, x], 0, 255)
-            idx, distance = nearest_block_index(color, palette_rgb, palette_lab, settings.quality)
+            idx, distance = nearest_block_index(color, palette_rgb, palette_lab, palette_hsl, settings.quality)
             block_id = settings.replacements.get(block_ids[idx], block_ids[idx])
             row.append(block_id)
 
