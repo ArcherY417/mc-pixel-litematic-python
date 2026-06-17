@@ -160,14 +160,14 @@ def pastel_tint_index(pixel: np.ndarray, best_idx: int, palette_hsl: np.ndarray,
     scores = np.where(candidate_mask, scores, np.inf)
     tint_idx = int(np.argmin(scores))
     tint_lightness_gap = float(lightness_gap[tint_idx])
-    neutral_base = best_s < 0.09
+    neutral_base = best_s < 0.16 or (source_l > 0.68 and float(hue_distance_array(source_h, np.array([best_h]))[0]) > 58)
     base_amount = (
         clamp01((chroma - 12) / 86)
         * clamp01((source_l - 0.45) / 0.5)
         * clamp01(1 - max(0.0, tint_lightness_gap - 0.14) / 0.5)
         * 0.58
     )
-    minimum_pastel_tint = clamp01((chroma - 16) / 70) * 0.62 if neutral_base and source_l > 0.68 else 0.0
+    minimum_pastel_tint = clamp01((chroma - 14) / 55) * 0.85 if neutral_base and source_l > 0.68 else 0.0
     amount = max(base_amount, minimum_pastel_tint)
     return tint_idx if amount > BAYER_4X4[y % 4, x % 4] else best_idx
 
@@ -307,6 +307,7 @@ def match_map_art(
     alpha = rgba[..., 3]
     palette_rgb = np.array([candidate.map_rgb for candidate in candidates], dtype=np.float64)
     palette_lab = srgb_to_lab(palette_rgb)
+    palette_hsl = rgb_array_to_hsl(palette_rgb)
     work = rgb.copy()
     chosen: list[list[MapColorCandidate | None]] = []
     block_grid: list[list[str]] = []
@@ -331,7 +332,7 @@ def match_map_art(
                 work[y, x] = np.array([0, 0, 0])
 
             color = np.clip(work[y, x], 0, 255)
-            idx, distance = nearest_map_color_index(color, palette_rgb, palette_lab, settings.quality)
+            idx, distance = nearest_map_color_index(color, palette_rgb, palette_lab, palette_hsl, settings.quality, x, y)
             candidate = candidates[idx]
             chosen_row.append(candidate)
             block_row.append(candidate.block_id)
@@ -367,14 +368,25 @@ def match_map_art(
     )
 
 
-def nearest_map_color_index(pixel: np.ndarray, palette_values: np.ndarray, palette_lab: np.ndarray, quality: QualityMode) -> tuple[int, float]:
+def nearest_map_color_index(
+    pixel: np.ndarray,
+    palette_values: np.ndarray,
+    palette_lab: np.ndarray,
+    palette_hsl: np.ndarray,
+    quality: QualityMode,
+    x: int,
+    y: int,
+) -> tuple[int, float]:
     if quality == QualityMode.FAST:
         weights = np.array([0.30, 0.59, 0.11])
         distances = np.sum(((palette_values - pixel) ** 2) * weights, axis=1)
     else:
         pixel_lab = srgb_to_lab(pixel.reshape(1, 3))[0]
-        distances = np.sum((palette_lab - pixel_lab) ** 2, axis=1)
+        lab_distances = np.sum((palette_lab - pixel_lab) ** 2, axis=1)
+        distances = hue_aware_lab_distances(pixel, palette_hsl, lab_distances)
     idx = int(np.argmin(distances))
+    if quality == QualityMode.HIGH:
+        idx = pastel_tint_index(pixel, idx, palette_hsl, x, y)
     return idx, float(np.sqrt(distances[idx]))
 
 
@@ -430,7 +442,10 @@ def should_diffuse(color: np.ndarray, lab_distance: float) -> bool:
     luminance = float(color[0] * 0.2126 + color[1] * 0.7152 + color[2] * 0.0722)
     chroma = float(np.max(color) - np.min(color))
     if luminance > 205 and chroma < 42:
-        return False
+        hue, saturation, _lightness = rgb_to_hsl(color)
+        cool_pastel = saturation > 0.12 and 55 <= hue <= 220
+        if not cool_pastel:
+            return False
     if lab_distance < 9 or lab_distance > 46:
         return False
     return True
