@@ -26,19 +26,9 @@ def png_bytes(pixels: list[list[tuple[int, int, int, int]]]) -> bytes:
     return buffer.getvalue()
 
 
-def average_preview_rgb(png: bytes) -> tuple[float, float, float]:
+def preview_rgba_bytes(png: bytes) -> bytes:
     image = Image.open(io.BytesIO(png)).convert("RGBA")
-    visible = [
-        image.getpixel((x, y))
-        for y in range(image.height)
-        for x in range(image.width)
-        if image.getpixel((x, y))[3]
-    ]
-    return (
-        sum(pixel[0] for pixel in visible) / len(visible),
-        sum(pixel[1] for pixel in visible) / len(visible),
-        sum(pixel[2] for pixel in visible) / len(visible),
-    )
+    return image.tobytes()
 
 
 def test_transparent_pixels_become_air() -> None:
@@ -60,26 +50,20 @@ def test_quality_modes_return_valid_materials() -> None:
     assert sum(high.materials.values()) == 2
 
 
-def test_pale_green_pixel_art_keeps_cool_tint() -> None:
-    settings = ConvertSettings(target_width=4, target_height=4, lock_aspect=False, quality=QualityMode.HIGH, show_grid=False)
-    art = convert_image(png_bytes([[(222, 246, 226, 255) for _ in range(4)] for _ in range(4)]), settings)
-    ids = [block_id for row in art.block_grid for block_id in row]
-    greenish = [
-        block_id
-        for block_id in ids
-        if any(term in block_id for term in ("lime", "cyan", "prismarine", "diamond", "verdant", "green", "sea_lantern"))
-    ]
-    sandy = [block_id for block_id in ids if any(term in block_id for term in ("sand", "end_stone", "bone_block"))]
-    assert greenish
-    assert len(sandy) < len(ids) / 2
+def test_high_quality_pixel_art_matches_fast_style() -> None:
+    image = png_bytes([[(222, 246, 226, 255) for _ in range(4)] for _ in range(4)])
+    fast = convert_image(image, ConvertSettings(target_width=4, target_height=4, lock_aspect=False, quality=QualityMode.FAST, show_grid=False))
+    high = convert_image(image, ConvertSettings(target_width=4, target_height=4, lock_aspect=False, quality=QualityMode.HIGH, show_grid=False))
+    assert high.block_grid == fast.block_grid
+    assert high.materials == fast.materials
 
 
-def test_pale_green_map_art_preview_keeps_green_bias() -> None:
-    settings = ConvertSettings(art_mode=ArtMode.MAP, map_variant=MapVariant.FLAT, quality=QualityMode.HIGH, show_grid=False)
-    art = convert_image(png_bytes([[(222, 246, 226, 255)]]), settings)
-    average = average_preview_rgb(art.map_preview_png or art.preview_png)
-    assert average[1] > average[0]
-    assert average[1] > average[2]
+def test_high_quality_map_art_matches_fast_style() -> None:
+    image = png_bytes([[(222, 246, 226, 255) for _ in range(4)] for _ in range(4)])
+    fast = convert_image(image, ConvertSettings(art_mode=ArtMode.MAP, map_variant=MapVariant.FLAT, quality=QualityMode.FAST, show_grid=False))
+    high = convert_image(image, ConvertSettings(art_mode=ArtMode.MAP, map_variant=MapVariant.FLAT, quality=QualityMode.HIGH, show_grid=False))
+    assert high.block_grid == fast.block_grid
+    assert preview_rgba_bytes(high.map_preview_png or high.preview_png) == preview_rgba_bytes(fast.map_preview_png or fast.preview_png)
 
 
 def test_wall_direction_coordinate_mapping() -> None:
